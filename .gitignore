@@ -50,3 +50,4 @@ mkinstalldirs
 tags
 test-driver
 scripts/_curl
+/build_x64
