@@ -130,9 +130,6 @@ tcpkeepalive(struct Curl_easy *data,
       infof(data, "Failed to set SIO_KEEPALIVE_VALS on fd %d: %d\n",
             (int)sockfd, WSAGetLastError());
     }
-#elif defined(CURL_WINDOWS_APP)
-    (void)majorVersion;
-    detectOsState = DETECT_OS_VISTA_OR_LATER;
 #else
 #ifdef TCP_KEEPIDLE
     optval = curlx_sltosi(data->set.tcp_keepidle);
@@ -182,12 +179,12 @@ singleipconnect(struct connectdata *conn,
  *
  * @unittest: 1303
  */
-long Curl_timeleft(struct Curl_easy *data,
-                   struct timeval *nowp,
-                   bool duringconnect)
+time_t Curl_timeleft(struct Curl_easy *data,
+                     struct timeval *nowp,
+                     bool duringconnect)
 {
   int timeout_set = 0;
-  long timeout_ms = duringconnect?DEFAULT_CONNECT_TIMEOUT:0;
+  time_t timeout_ms = duringconnect?DEFAULT_CONNECT_TIMEOUT:0;
   struct timeval now;
 
   /* if a timeout is set, use the most restrictive one */
@@ -197,7 +194,7 @@ long Curl_timeleft(struct Curl_easy *data,
   if(duringconnect && (data->set.connecttimeout > 0))
     timeout_set |= 2;
 
-  switch (timeout_set) {
+  switch(timeout_set) {
   case 1:
     timeout_ms = data->set.timeout;
     break;
@@ -604,26 +601,28 @@ void Curl_persistconninfo(struct connectdata *conn)
 {
   memcpy(conn->data->info.conn_primary_ip, conn->primary_ip, MAX_IPADR_LEN);
   memcpy(conn->data->info.conn_local_ip, conn->local_ip, MAX_IPADR_LEN);
+  conn->data->info.conn_scheme = conn->handler->scheme;
+  conn->data->info.conn_protocol = conn->handler->protocol;
   conn->data->info.conn_primary_port = conn->primary_port;
   conn->data->info.conn_local_port = conn->local_port;
 }
 
 /* retrieves ip address and port from a sockaddr structure */
-static bool getaddressinfo(struct sockaddr* sa, char* addr,
-                           long* port)
+static bool getaddressinfo(struct sockaddr *sa, char *addr,
+                           long *port)
 {
   unsigned short us_port;
-  struct sockaddr_in* si = NULL;
+  struct sockaddr_in *si = NULL;
 #ifdef ENABLE_IPV6
-  struct sockaddr_in6* si6 = NULL;
+  struct sockaddr_in6 *si6 = NULL;
 #endif
 #if defined(HAVE_SYS_UN_H) && defined(AF_UNIX)
-  struct sockaddr_un* su = NULL;
+  struct sockaddr_un *su = NULL;
 #endif
 
-  switch (sa->sa_family) {
+  switch(sa->sa_family) {
     case AF_INET:
-      si = (struct sockaddr_in*)(void*) sa;
+      si = (struct sockaddr_in *)(void *) sa;
       if(Curl_inet_ntop(sa->sa_family, &si->sin_addr,
                         addr, MAX_IPADR_LEN)) {
         us_port = ntohs(si->sin_port);
@@ -633,7 +632,7 @@ static bool getaddressinfo(struct sockaddr* sa, char* addr,
       break;
 #ifdef ENABLE_IPV6
     case AF_INET6:
-      si6 = (struct sockaddr_in6*)(void*) sa;
+      si6 = (struct sockaddr_in6 *)(void *) sa;
       if(Curl_inet_ntop(sa->sa_family, &si6->sin6_addr,
                         addr, MAX_IPADR_LEN)) {
         us_port = ntohs(si6->sin6_port);
@@ -725,7 +724,7 @@ CURLcode Curl_is_connected(struct connectdata *conn,
 {
   struct Curl_easy *data = conn->data;
   CURLcode result = CURLE_OK;
-  long allow;
+  time_t allow;
   int error = 0;
   struct timeval now;
   int rc;
@@ -765,7 +764,7 @@ CURLcode Curl_is_connected(struct connectdata *conn,
 #endif
 
     /* check socket for connect */
-    rc = Curl_socket_ready(CURL_SOCKET_BAD, conn->tempsock[i], 0);
+    rc = SOCKET_WRITABLE(conn->tempsock[i], 0);
 
     if(rc == 0) { /* no connection yet */
       error = 0;
@@ -846,7 +845,7 @@ CURLcode Curl_is_connected(struct connectdata *conn,
   if(result) {
     /* no more addresses to try */
 
-    const char* hostname;
+    const char *hostname;
 
     /* if the first address family runs out of addresses to try before
        the happy eyeball timeout, go ahead and try the next family now */
@@ -856,8 +855,10 @@ CURLcode Curl_is_connected(struct connectdata *conn,
         return result;
     }
 
-    if(conn->bits.proxy)
-      hostname = conn->proxy.name;
+    if(conn->bits.socksproxy)
+      hostname = conn->socks_proxy.host.name;
+    else if(conn->bits.httpproxy)
+      hostname = conn->http_proxy.host.name;
     else if(conn->bits.conn_to_host)
       hostname = conn->conn_to_host.name;
     else
@@ -1156,7 +1157,7 @@ CURLcode Curl_connecthost(struct connectdata *conn,  /* context */
   struct timeval before = Curl_tvnow();
   CURLcode result = CURLE_COULDNT_CONNECT;
 
-  long timeout_ms = Curl_timeleft(data, &before, TRUE);
+  time_t timeout_ms = Curl_timeleft(data, &before, TRUE);
 
   if(timeout_ms < 0) {
     /* a precaution, no need to continue if time already is up */
@@ -1376,7 +1377,7 @@ CURLcode Curl_socket(struct connectdata *conn,
  */
 void Curl_conncontrol(struct connectdata *conn,
                       int ctrl /* see defines in header */
-#ifdef CURLDEBUG
+#ifdef DEBUGBUILD
                       , const char *reason
 #endif
   )

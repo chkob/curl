@@ -35,9 +35,9 @@ CURLcode Curl_connecthost(struct connectdata *conn,
 
 /* generic function that returns how much time there's left to run, according
    to the timeouts set */
-long Curl_timeleft(struct Curl_easy *data,
-                   struct timeval *nowp,
-                   bool duringconnect);
+time_t Curl_timeleft(struct Curl_easy *data,
+                     struct timeval *nowp,
+                     bool duringconnect);
 
 #define DEFAULT_CONNECT_TIMEOUT 300000 /* milliseconds == five minutes */
 #define HAPPY_EYEBALLS_TIMEOUT     200 /* milliseconds to wait between
@@ -122,12 +122,12 @@ void Curl_tcpnodelay(struct connectdata *conn, curl_socket_t sockfd);
 
 void Curl_conncontrol(struct connectdata *conn,
                       int closeit
-#ifdef CURLDEBUG
+#ifdef DEBUGBUILD
                       , const char *reason
 #endif
   );
 
-#ifdef CURLDEBUG
+#ifdef DEBUGBUILD
 #define streamclose(x,y) Curl_conncontrol(x, CONNCTRL_STREAM, y)
 #define connclose(x,y) Curl_conncontrol(x, CONNCTRL_CONNECTION, y)
 #define connkeep(x,y) Curl_conncontrol(x, CONNCTRL_KEEP, y)

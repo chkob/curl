@@ -467,8 +467,8 @@
 
 #  ifdef __minix
      /* Minix 3 versions up to at least 3.1.3 are missing these prototypes */
-     extern char * strtok_r(char *s, const char *delim, char **last);
-     extern struct tm * gmtime_r(const time_t * const timep, struct tm *tmp);
+     extern char *strtok_r(char *s, const char *delim, char **last);
+     extern struct tm *gmtime_r(const time_t * const timep, struct tm *tmp);
 #  endif
 
 #  define DIR_CHAR      "/"
@@ -599,10 +599,9 @@ int netware_init(void);
 #endif
 #endif
 
-#if defined(HAVE_LIBIDN) && defined(HAVE_TLD_H)
-/* The lib was present and the tld.h header (which is missing in libidn 0.3.X
-   but we only work with libidn 0.4.1 or later) */
-#define USE_LIBIDN
+#if defined(HAVE_LIBIDN2) && defined(HAVE_IDN2_H)
+/* The lib and header are present */
+#define USE_LIBIDN2
 #endif
 
 #ifndef SIZEOF_TIME_T
@@ -634,11 +633,17 @@ int netware_init(void);
 /* Single point where USE_NTLM definition might be defined */
 #if !defined(CURL_DISABLE_NTLM) && !defined(CURL_DISABLE_CRYPTO_AUTH)
 #if defined(USE_OPENSSL) || defined(USE_WINDOWS_SSPI) || \
-    defined(USE_GNUTLS) || defined(USE_MBEDTLS) || defined(USE_NSS) || \
-    defined(USE_DARWINSSL) || defined(USE_OS400CRYPTO) || \
-    defined(USE_WIN32_CRYPTO)
+    defined(USE_GNUTLS) || defined(USE_NSS) || defined(USE_DARWINSSL) || \
+    defined(USE_OS400CRYPTO) || defined(USE_WIN32_CRYPTO)
 
 #define USE_NTLM
+
+#elif defined(USE_MBEDTLS)
+#  include <mbedtls/md4.h>
+#  if defined(MBEDTLS_MD4_C)
+#define USE_NTLM
+#  endif
+
 #endif
 #endif
 

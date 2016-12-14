@@ -33,9 +33,10 @@
 #include "url.h"
 #include "progress.h"
 #include "rtsp.h"
-#include "rawstr.h"
+#include "strcase.h"
 #include "select.h"
 #include "connect.h"
+#include "strdup.h"
 /* The last 3 #include files should be in this order */
 #include "curl_printf.h"
 #include "curl_memory.h"
@@ -147,7 +148,7 @@ bool Curl_rtsp_connisdead(struct connectdata *check)
   int sval;
   bool ret_val = TRUE;
 
-  sval = Curl_socket_ready(check->sock[FIRSTSOCKET], CURL_SOCKET_BAD, 0);
+  sval = SOCKET_READABLE(check->sock[FIRSTSOCKET], 0);
   if(sval == 0) {
     /* timeout */
     ret_val = FALSE;
@@ -488,7 +489,7 @@ static CURLcode rtsp_do(struct connectdata *conn, bool *done)
    * Free userpwd now --- cannot reuse this for Negotiate and possibly NTLM
    * with basic and digest, it will be freed anyway by the next request
    */
-  Curl_safefree (conn->allocptr.userpwd);
+  Curl_safefree(conn->allocptr.userpwd);
   conn->allocptr.userpwd = NULL;
 
   if(result)
@@ -614,9 +615,9 @@ static CURLcode rtsp_rtp_readwrite(struct Curl_easy *data,
 
   if(rtspc->rtp_buf) {
     /* There was some leftover data the last time. Merge buffers */
-    char *newptr = realloc(rtspc->rtp_buf, rtspc->rtp_bufsize + *nread);
+    char *newptr = Curl_saferealloc(rtspc->rtp_buf,
+                                    rtspc->rtp_bufsize + *nread);
     if(!newptr) {
-      Curl_safefree(rtspc->rtp_buf);
       rtspc->rtp_buf = NULL;
       rtspc->rtp_bufsize = 0;
       return CURLE_OUT_OF_MEMORY;
@@ -736,7 +737,7 @@ CURLcode rtp_client_write(struct connectdata *conn, char *ptr, size_t len)
   curl_write_callback writeit;
 
   if(len == 0) {
-    failf (data, "Cannot write a 0 size RTP packet.");
+    failf(data, "Cannot write a 0 size RTP packet.");
     return CURLE_WRITE_ERROR;
   }
 
@@ -744,12 +745,12 @@ CURLcode rtp_client_write(struct connectdata *conn, char *ptr, size_t len)
   wrote = writeit(ptr, 1, len, data->set.rtp_out);
 
   if(CURL_WRITEFUNC_PAUSE == wrote) {
-    failf (data, "Cannot pause RTP");
+    failf(data, "Cannot pause RTP");
     return CURLE_WRITE_ERROR;
   }
 
   if(wrote != len) {
-    failf (data, "Failed writing RTP data");
+    failf(data, "Failed writing RTP data");
     return CURLE_WRITE_ERROR;
   }
 

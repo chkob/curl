@@ -21,10 +21,7 @@
  ***************************************************************************/
 
 #include "curl_setup.h"
-
 #include "strtoofft.h"
-#include "strequal.h"
-#include "rawstr.h"
 
 #ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>
@@ -75,6 +72,7 @@
 #include "multiif.h"
 #include "connect.h"
 #include "non-ascii.h"
+#include "http2.h"
 
 /* The last 3 #include files should be in this order */
 #include "curl_printf.h"
@@ -534,6 +532,13 @@ static CURLcode readwrite_data(struct Curl_easy *data,
        is non-headers. */
     if(k->str && !k->header && (nread > 0 || is_empty_data)) {
 
+      if(data->set.opt_no_body) {
+        /* data arrives although we want none, bail out */
+        streamclose(conn, "ignoring body");
+        *done = TRUE;
+        return CURLE_WEIRD_SERVER_REPLY;
+      }
+
 #ifndef CURL_DISABLE_HTTP
       if(0 == k->bodywrites && !is_empty_data) {
         /* These checks are only made the first time we are about to
@@ -736,8 +741,8 @@ static CURLcode readwrite_data(struct Curl_easy *data,
              Make sure that ALL_CONTENT_ENCODINGS contains all the
              encodings handled here. */
 #ifdef HAVE_LIBZ
-          switch (conn->data->set.http_ce_skip ?
-                  IDENTITY : k->auto_decoding) {
+          switch(conn->data->set.http_ce_skip ?
+                 IDENTITY : k->auto_decoding) {
           case IDENTITY:
 #endif
             /* This is the default when the server sends no
@@ -770,9 +775,9 @@ static CURLcode readwrite_data(struct Curl_easy *data,
             break;
 
           default:
-            failf (data, "Unrecognized content encoding type. "
-                   "libcurl understands `identity', `deflate' and `gzip' "
-                   "content encodings.");
+            failf(data, "Unrecognized content encoding type. "
+                  "libcurl understands `identity', `deflate' and `gzip' "
+                  "content encodings.");
             result = CURLE_BAD_CONTENT_ENCODING;
             break;
           }
@@ -831,6 +836,8 @@ static CURLcode done_sending(struct connectdata *conn,
                              struct SingleRequest *k)
 {
   k->keepon &= ~KEEP_SEND; /* we're done writing */
+
+  Curl_http2_done_sending(conn);
 
   if(conn->bits.rewindaftersend) {
     CURLcode result = Curl_readrewind(conn);
@@ -1079,7 +1086,7 @@ CURLcode Curl_readwrite(struct connectdata *conn,
 
   if(!select_res) /* Call for select()/poll() only, if read/write/error
                      status is not known. */
-    select_res = Curl_socket_ready(fd_read, fd_write, 0);
+    select_res = Curl_socket_check(fd_read, CURL_SOCKET_BAD, fd_write, 0);
 
   if(select_res == CURL_CSELECT_ERR) {
     failf(data, "select/poll returned error");
@@ -1130,7 +1137,7 @@ CURLcode Curl_readwrite(struct connectdata *conn,
 
       */
 
-      long ms = Curl_tvdiff(k->now, k->start100);
+      time_t ms = Curl_tvdiff(k->now, k->start100);
       if(ms >= data->set.expect_100_timeout) {
         /* we've waited long enough, continue anyway */
         k->exp100 = EXP100_SEND_DATA;
@@ -1264,60 +1271,6 @@ int Curl_single_getsock(const struct connectdata *conn,
   return bitmap;
 }
 
-/*
- * Determine optimum sleep time based on configured rate, current rate,
- * and packet size.
- * Returns value in milliseconds.
- *
- * The basic idea is to adjust the desired rate up/down in this method
- * based on whether we are running too slow or too fast.  Then, calculate
- * how many milliseconds to wait for the next packet to achieve this new
- * rate.
- */
-long Curl_sleep_time(curl_off_t rate_bps, curl_off_t cur_rate_bps,
-                             int pkt_size)
-{
-  curl_off_t min_sleep = 0;
-  curl_off_t rv = 0;
-
-  if(rate_bps == 0)
-    return 0;
-
-  /* If running faster than about .1% of the desired speed, slow
-   * us down a bit.  Use shift instead of division as the 0.1%
-   * cutoff is arbitrary anyway.
-   */
-  if(cur_rate_bps > (rate_bps + (rate_bps >> 10))) {
-    /* running too fast, decrease target rate by 1/64th of rate */
-    rate_bps -= rate_bps >> 6;
-    min_sleep = 1;
-  }
-  else if(cur_rate_bps < (rate_bps - (rate_bps >> 10))) {
-    /* running too slow, increase target rate by 1/64th of rate */
-    rate_bps += rate_bps >> 6;
-  }
-
-  /* Determine number of milliseconds to wait until we do
-   * the next packet at the adjusted rate.  We should wait
-   * longer when using larger packets, for instance.
-   */
-  rv = ((curl_off_t)(pkt_size * 1000) / rate_bps);
-
-  /* Catch rounding errors and always slow down at least 1ms if
-   * we are running too fast.
-   */
-  if(rv < min_sleep)
-    rv = min_sleep;
-
-  /* Bound value to fit in 'long' on 32-bit platform.  That's
-   * plenty long enough anyway!
-   */
-  if(rv > 0x7fffffff)
-    rv = 0x7fffffff;
-
-  return (long)rv;
-}
-
 /* Curl_init_CONNECT() gets called each time the handle switches to CONNECT
    which means this gets called once for each subsequent redirect etc */
 void Curl_init_CONNECT(struct Curl_easy *data)
@@ -1343,7 +1296,7 @@ CURLcode Curl_pretransfer(struct Curl_easy *data)
   /* Init the SSL session ID cache here. We do it here since we want to do it
      after the *_setopt() calls (that could specify the size of the cache) but
      before any transfer takes place. */
-  result = Curl_ssl_initsessions(data, data->set.ssl.max_ssl_sessions);
+  result = Curl_ssl_initsessions(data, data->set.general_ssl.max_ssl_sessions);
   if(result)
     return result;
 
